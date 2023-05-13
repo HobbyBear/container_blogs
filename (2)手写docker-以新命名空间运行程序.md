@@ -6,8 +6,7 @@
 
 届时运行效果如下:
 
-![image.png](https://s2.loli.net/2023/05/13/tj2lJbGQMvhxCRP.png)
-
+![tty.gif](https://s2.loli.net/2023/05/13/O3fFxyNWnhoakHJ.gif)
 
 在正式开始编写代码前，先来看看linux namespace涉及的一些原理。
 
