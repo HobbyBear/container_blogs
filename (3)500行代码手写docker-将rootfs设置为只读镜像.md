@@ -1,4 +1,4 @@
-# (3)手写docker-将rootfs设置为只读镜像
+# (3)500行代码代码手写docker-将rootfs设置为只读镜像
 
 > 本系列教程主要是为了弄清楚容器化的原理，纸上得来终觉浅，绝知此事要躬行，理论始终不及动手实践来的深刻，所以这个系列会用go语言实现一个类似docker的容器化功能，最终能够容器化的运行一个进程。
 
@@ -7,17 +7,17 @@
 https://github.com/HobbyBear/tinydocker/tree/chapter3
 ```
 
-实际运行效果:
+
+前文提到，如果仅仅将ubuntu-base-16.04.6-base-amd64 目录作为容器的根目录， 那么当运行多个容器，就会同时修改到ubuntu-base-16.04.6-base-amd64目录，这样将达不到不同容器使用不同的根文件系统的目的。
+
+所以这节我将会演示如何运行内核提供到联合文件系统的功能，来达到一份镜像，多次运行的目的。
+
+这节代码运行效果:
 
 ![image.png](https://s2.loli.net/2023/05/14/TfOhnxlvF6eAYMK.png)
 
 可以看到我其实启动了两个容器 hello1 ,hello2 然后在hello1 下创建test目录，但是test目录在hello2容器里是不可见的。
 
-
-
-前文提到，如果仅仅将ubuntu-base-16.04.6-base-amd64 目录作为容器的根目录， 那么当运行多个容器，就会同时修改到ubuntu-base-16.04.6-base-amd64目录，这样将达不到不同容器使用不同的根文件系统的目的。
-
-所以这节我将会演示如何运行内核提供到联合文件系统的功能，来达到一份镜像，多次运行的目的。
 
 ## 联合文件系统原理
 首先，来先简单的看看联合文件系统的概念。
@@ -53,55 +53,55 @@ sudo mount -t overlay overlay -o lowerdir=image-layer1:image-layer2,upperdir=con
 ```go
 func main() {
 
-	switch os.Args[1] {
-	case "run":
-		initCmd, err := os.Readlink("/proc/self/exe")
-		if err != nil {
-			fmt.Println("get init process error ", err)
-			return
-		}
-		// 获取容器名
-		containerName := os.Args[2]
-		os.Args[1] = "init"
-		cmd := exec.Command(initCmd, os.Args[1:]...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS |
-				syscall.CLONE_NEWNET | syscall.CLONE_NEWIPC,
-		}
-		cmd.Env = os.Environ()
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		err = cmd.Run()
-		if err != nil {
-			fmt.Println(err)
-		}
-		// 容器结束后要清理掉它的挂载点和目录
-		workspace.DelMntNamespace(containerName)
-		return
-	case "init":
-		var (
-			containerName = os.Args[2]
-			cmd           = os.Args[3]
-		)
-		// 创建挂载点和更换rootfs
-		if err := workspace.SetMntNamespace(containerName); err != nil {
-			fmt.Println(err)
-			return
-		}
-		syscall.Chdir("/")
-		defaultMountFlags := syscall.MS_NOEXEC | syscall.MS_NOSUID | syscall.MS_NODEV
-		syscall.Mount("proc", "/proc", "proc", uintptr(defaultMountFlags), "")
-		err := syscall.Exec(cmd, os.Args[3:], os.Environ())
-		if err != nil {
-			fmt.Println("exec proc fail ", err)
-			return
-		}
-		fmt.Println("forever exec it ")
-		return
-	default:
-		fmt.Println("not valid cmd")
-	}
+switch os.Args[1] {
+case "run":
+initCmd, err := os.Readlink("/proc/self/exe")
+if err != nil {
+fmt.Println("get init process error ", err)
+return
+}
+// 获取容器名
+containerName := os.Args[2]
+os.Args[1] = "init"
+cmd := exec.Command(initCmd, os.Args[1:]...)
+cmd.SysProcAttr = &syscall.SysProcAttr{
+Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS |
+syscall.CLONE_NEWNET | syscall.CLONE_NEWIPC,
+}
+cmd.Env = os.Environ()
+cmd.Stdin = os.Stdin
+cmd.Stdout = os.Stdout
+cmd.Stderr = os.Stderr
+err = cmd.Run()
+if err != nil {
+fmt.Println(err)
+}
+// 容器结束后要清理掉它的挂载点和目录
+workspace.DelMntNamespace(containerName)
+return
+case "init":
+var (
+containerName = os.Args[2]
+cmd           = os.Args[3]
+)
+// 创建挂载点和更换rootfs
+if err := workspace.SetMntNamespace(containerName); err != nil {
+fmt.Println(err)
+return
+}
+syscall.Chdir("/")
+defaultMountFlags := syscall.MS_NOEXEC | syscall.MS_NOSUID | syscall.MS_NODEV
+syscall.Mount("proc", "/proc", "proc", uintptr(defaultMountFlags), "")
+err := syscall.Exec(cmd, os.Args[3:], os.Environ())
+if err != nil {
+fmt.Println("exec proc fail ", err)
+return
+}
+fmt.Println("forever exec it ")
+return
+default:
+fmt.Println("not valid cmd")
+}
 }
 ```
 可以看到，在以新命名空间启动一个子进程后，在workspace.SetMntNamespace 里将会进行相关目录的挂载，然后在执行cmd.Run 的父进程中，等待子进程结束后，调用了workspace.DelMntNamespace清理了子进程的挂载点和相关目录。
@@ -109,36 +109,36 @@ func main() {
 而workspace.SetMntNamespace 的源码如下:
 ```golang
 func SetMntNamespace(containerName string) error {
-	if err := os.MkdirAll(mntLayer(containerName), 0700); err != nil {
-		return fmt.Errorf("mkdir mntlayer fail err=%s", err)
-	}
-	if err := os.MkdirAll(workerLayer(containerName), 0700); err != nil {
-		return fmt.Errorf("mkdir work layer fail err=%s", err)
-	}
-	if err := os.MkdirAll(writeLayer(containerName), 0700); err != nil {
-		return fmt.Errorf("mkdir write layer fail err=%s", err)
-	}
+if err := os.MkdirAll(mntLayer(containerName), 0700); err != nil {
+return fmt.Errorf("mkdir mntlayer fail err=%s", err)
+}
+if err := os.MkdirAll(workerLayer(containerName), 0700); err != nil {
+return fmt.Errorf("mkdir work layer fail err=%s", err)
+}
+if err := os.MkdirAll(writeLayer(containerName), 0700); err != nil {
+return fmt.Errorf("mkdir write layer fail err=%s", err)
+}
 
-	if err := syscall.Mount("overlay", mntLayer(containerName), "overlay", 0,
-		fmt.Sprintf("upperdir=%s,lowerdir=%s,workdir=%s",
-			writeLayer(containerName), imagePath, workerLayer(containerName))); err != nil {
-		return fmt.Errorf("mount overlay fail err=%s", err)
-	}
+if err := syscall.Mount("overlay", mntLayer(containerName), "overlay", 0,
+fmt.Sprintf("upperdir=%s,lowerdir=%s,workdir=%s",
+writeLayer(containerName), imagePath, workerLayer(containerName))); err != nil {
+return fmt.Errorf("mount overlay fail err=%s", err)
+}
 
-	if err := syscall.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, ""); err != nil {
-		return fmt.Errorf("reclare rootfs private fail err=%s", err)
-	}
+if err := syscall.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, ""); err != nil {
+return fmt.Errorf("reclare rootfs private fail err=%s", err)
+}
 
-	if err := syscall.Mount(mntLayer(containerName), mntLayer(containerName), "bind", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
-		return fmt.Errorf("mount rootfs in new mnt space fail err=%s", err)
-	}
-	if err := os.MkdirAll(mntOldLayer(containerName), 0700); err != nil {
-		return fmt.Errorf("mkdir mnt old layer fail err=%s", err)
-	}
-	if err := syscall.PivotRoot(mntLayer(containerName), mntOldLayer(containerName)); err != nil {
-		return fmt.Errorf("pivot root  fail err=%s", err)
-	}
-	return nil
+if err := syscall.Mount(mntLayer(containerName), mntLayer(containerName), "bind", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
+return fmt.Errorf("mount rootfs in new mnt space fail err=%s", err)
+}
+if err := os.MkdirAll(mntOldLayer(containerName), 0700); err != nil {
+return fmt.Errorf("mkdir mnt old layer fail err=%s", err)
+}
+if err := syscall.PivotRoot(mntLayer(containerName), mntOldLayer(containerName)); err != nil {
+return fmt.Errorf("pivot root  fail err=%s", err)
+}
+return nil
 }
 ```
 
